@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trinquet 3D — Shot Simulator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0c12; overflow: hidden; }
+  #container { position: fixed; inset: 0; }
+
+  #panel {
+    position: fixed; top: 12px; right: 12px; width: 300px;
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: calc(100vh - 24px); overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: #333 transparent;
+    z-index: 10;
+  }
+  .shot-btn {
+    display: flex; flex-direction: column; padding: 10px 14px;
+    border: 1px solid #2a2d38; border-radius: 8px; background: #12141cdd;
+    cursor: pointer; transition: all .15s; backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .shot-btn:hover { background: #1a1e2add; border-color: #3a3f52; }
+  .shot-btn.active { border-color: var(--c); box-shadow: 0 0 12px color-mix(in srgb, var(--c) 25%, transparent); }
+  .shot-btn .name { font-weight: 600; font-size: .88rem; color: #eee; }
+  .shot-btn .es { color: #888; font-weight: 400; font-size: .78rem; }
+  .shot-btn .desc { font-size: .72rem; color: #999; line-height: 1.35; margin-top: 3px; }
+
+  #cameras {
+    position: fixed; top: 12px; left: 12px; display: flex; gap: 6px;
+    flex-wrap: wrap; max-width: 380px; z-index: 10;
+  }
+  #cameras button {
+    padding: 6px 12px; border: 1px solid #2a2d38; border-radius: 6px;
+    background: #12141cdd; color: #bbb; cursor: pointer; font-size: .75rem;
+    transition: all .15s; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #cameras button:hover { background: #1e2230dd; color: #fff; }
+  #cameras button.active { border-color: #4a7cff; color: #4a7cff; }
+
+  #controls {
+    position: fixed; bottom: 12px; left: 12px; display: flex; gap: 8px;
+    align-items: center; z-index: 10;
+  }
+  #controls button {
+    padding: 7px 16px; border: 1px solid #2a2d38; border-radius: 6px;
+    background: #12141cdd; color: #ccc; cursor: pointer; font-size: .78rem;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); transition: all .15s;
+  }
+  #controls button:hover { background: #1e2230dd; color: #fff; }
+
+  #legend {
+    position: fixed; bottom: 12px; right: 12px; padding: 10px 14px;
+    border: 1px solid #2a2d38; border-radius: 8px; background: #12141cdd;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: .7rem; color: #888; line-height: 1.7; z-index: 10;
+  }
+  #legend b { color: #bbb; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+
+  #title {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    color: #ffffff50; font-size: .7rem; z-index: 10; text-align: center;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="container"></div>
+
+<div id="cameras">
+  <button data-cam="default" class="active">3/4 View</button>
+  <button data-cam="top">Top</button>
+  <button data-cam="side">Side (Glass)</button>
+  <button data-cam="player">Player POV</button>
+  <button data-cam="frontis">From Frontis</button>
+  <button data-cam="gallery">Gallery (Tejadillo)</button>
+</div>
+
+<div id="panel"></div>
+
+<div id="controls">
+  <button id="replay">&#x25B6; Replay</button>
+  <button id="speed">Speed: 1x</button>
+  <button id="pause">Pause</button>
+</div>
+
+<div id="legend">
+  <b>Court elements</b><br>
+  <span class="dot" style="background:#c05050"></span> Frontis (front wall)<br>
+  <span class="dot" style="background:#5070b0"></span> Rebote (back wall)<br>
+  <span class="dot" style="background:#d4a040"></span> Fraile — 45° wedge (right)<br>
+  <span class="dot" style="background:#50a060"></span> Tejadillo — inclined roof (left)<br>
+  <span class="dot" style="background:#ccaa00"></span> Chapa — metal strips<br>
+  <span class="dot" style="background:#9060b0"></span> Sare — net window
+</div>
+
+<div id="title">Drag to orbit &middot; Scroll to zoom &middot; Right-click to pan</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Court dimensions (meters) ──
+// Coordinate system: X = length (0=frontis, 28.5=rebote), Y = height, Z = width
+// z=0 → RIGHT wall (glass + fraile)
+// z=COURT_W → LEFT wall (solid + tejadillo gallery)
+const COURT_L = 28.5, COURT_W = 9.3, COURT_H = 9.5;
+const FRAILE_W = 0.47;
+const TEJ_D = 1.3, TEJ_H_OUTER = 1.9, TEJ_H_INNER = 2.25;
+const CHAPA_LOW = 0.8, CHAPA_HIGH = 8.5, CHAPA_REBOTE = 5.0;
+const WALL_STEP_X = 4.5, WALL_H_FRONT = 8.5, WALL_H_BACK = 5.5;
+const TEJ_Z = COURT_W - TEJ_D; // outer edge of tejadillo = 8.0
+
+// ── Scene ──
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0c12);
+scene.fog = new THREE.FogExp2(0x0a0c12, 0.008);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.getElementById('container').appendChild(renderer.domElement);
+
+// Camera behind court looking toward frontis — left on screen = tejadillo, right = glass
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(30, 13, 0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(10, 2, 5);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+// ── Lights ──
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+const dirLight = new THREE.DirectionalLight(0xfff8e8, 1.2);
+dirLight.position.set(14, 20, 5);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+Object.assign(dirLight.shadow.camera, { left: -20, right: 35, top: 15, bottom: -5, near: 1, far: 50 });
+scene.add(dirLight);
+
+scene.add(new THREE.DirectionalLight(0xb0c0ff, 0.3).translateX(-5).translateY(10).translateZ(10));
+
+// ── Materials ──
+const mat = {
+  floor:    new THREE.MeshStandardMaterial({ color: 0x1a3828, roughness: 0.85 }),
+  frontis:  new THREE.MeshStandardMaterial({ color: 0xb8a898, roughness: 0.6 }),
+  rebote:   new THREE.MeshStandardMaterial({ color: 0xa09080, roughness: 0.6 }),
+  wall:     new THREE.MeshStandardMaterial({ color: 0xa89888, roughness: 0.6 }),
+  glass:    new THREE.MeshStandardMaterial({ color: 0x88bbdd, roughness: 0.1, transparent: true, opacity: 0.06, side: THREE.DoubleSide }),
+  fraile:   new THREE.MeshStandardMaterial({ color: 0xd4a040, roughness: 0.4, side: THREE.DoubleSide }),
+  tejRoof:  new THREE.MeshStandardMaterial({ color: 0x705838, roughness: 0.7, side: THREE.DoubleSide }),
+  tejWall:  new THREE.MeshStandardMaterial({ color: 0x807060, roughness: 0.6 }),
+  chapa:    new THREE.MeshStandardMaterial({ color: 0xccaa00, emissive: 0x554400, roughness: 0.3, metalness: 0.6 }),
+  net:      new THREE.MeshStandardMaterial({ color: 0x9060b0, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+  line:     new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x444444, transparent: true, opacity: 0.5 }),
+  padding:  new THREE.MeshStandardMaterial({ color: 0x332222, roughness: 0.95 }),
+};
+
+function box(w, h, d, material) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function addEdge(pts, color = 0x446688, opacity = 0.3) {
+  const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p)));
+  scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity })));
+}
+
+// ── Floor ──
+const floor = box(COURT_L, 0.12, COURT_W, mat.floor);
+floor.position.set(COURT_L/2, -0.06, COURT_W/2);
+scene.add(floor);
+
+// Floor lines at 10m, 15m, 17.5m, 20m from frontis
+[10, 15, 17.5, 20].forEach(d => {
+  const l = box(0.08, 0.005, COURT_W, mat.line);
+  l.position.set(d, 0.005, COURT_W/2);
+  scene.add(l);
+});
+// Perpendicular from 15m to rebote at court center
+const perpLine = box(COURT_L - 15, 0.005, 0.08, mat.line);
+perpLine.position.set(15 + (COURT_L - 15)/2, 0.005, COURT_W/2);
+scene.add(perpLine);
+
+// ── Frontis (front wall, x=0) ──
+const frontis = box(0.35, 10, COURT_W, mat.frontis);
+frontis.position.set(-0.175, 5, COURT_W/2);
+scene.add(frontis);
+
+const padAbove = box(0.36, 1.5, COURT_W, mat.padding);
+padAbove.position.set(-0.175, CHAPA_HIGH + 0.75, COURT_W/2);
+scene.add(padAbove);
+
+const chapaLow = box(0.06, 0.12, COURT_W + 0.1, mat.chapa);
+chapaLow.position.set(0.03, CHAPA_LOW, COURT_W/2);
+scene.add(chapaLow);
+
+const chapaHigh = box(0.06, 0.1, COURT_W + 0.1, mat.chapa);
+chapaHigh.position.set(0.03, CHAPA_HIGH, COURT_W/2);
+scene.add(chapaHigh);
+
+const padBelow = box(0.36, CHAPA_LOW, COURT_W, mat.padding);
+padBelow.position.set(-0.175, CHAPA_LOW/2, COURT_W/2);
+scene.add(padBelow);
+
+// ── Rebote (back wall, x=28.5) ──
+const rebote = box(0.3, WALL_H_BACK, COURT_W, mat.rebote);
+rebote.position.set(COURT_L + 0.15, WALL_H_BACK/2, COURT_W/2);
+scene.add(rebote);
+
+const chapaReb = box(0.06, 0.1, COURT_W + 0.1, mat.chapa);
+chapaReb.position.set(COURT_L - 0.03, CHAPA_REBOTE, COURT_W/2);
+scene.add(chapaReb);
+
+// ── LEFT wall (solid, z=COURT_W side, with tejadillo below) ──
+// Above tejadillo near frontis: from y=TEJ_H_INNER to y=WALL_H_FRONT, first 4.5m
+const lwH1 = WALL_H_FRONT - TEJ_H_INNER;
+const lw1 = box(WALL_STEP_X, lwH1, 0.3, mat.wall);
+lw1.position.set(WALL_STEP_X/2, TEJ_H_INNER + lwH1/2, COURT_W + 0.15);
+scene.add(lw1);
+
+// Above tejadillo further back: from y=TEJ_H_INNER to y=WALL_H_BACK
+const lwH2 = WALL_H_BACK - TEJ_H_INNER;
+const lw2 = box(COURT_L - WALL_STEP_X, lwH2, 0.3, mat.wall);
+lw2.position.set(WALL_STEP_X + (COURT_L - WALL_STEP_X)/2, TEJ_H_INNER + lwH2/2, COURT_W + 0.15);
+scene.add(lw2);
+
+// Step face where wall height drops at 4.5m
+const stepFace = box(0.3, WALL_H_FRONT - WALL_H_BACK, 0.3, mat.wall);
+stepFace.position.set(WALL_STEP_X, WALL_H_BACK + (WALL_H_FRONT - WALL_H_BACK)/2, COURT_W + 0.15);
+scene.add(stepFace);
+
+// Left wall below tejadillo (behind gallery)
+const lwBelowMat = mat.wall.clone();
+lwBelowMat.transparent = true; lwBelowMat.opacity = 0.3;
+const lwBelow = box(COURT_L, TEJ_H_INNER, 0.15, lwBelowMat);
+lwBelow.position.set(COURT_L/2, TEJ_H_INNER/2, COURT_W + 0.075);
+scene.add(lwBelow);
+
+// ── RIGHT wall (glass, z=0 side) ──
+const rw1 = box(WALL_STEP_X, WALL_H_FRONT, 0.08, mat.glass);
+rw1.position.set(WALL_STEP_X/2, WALL_H_FRONT/2, -0.04);
+scene.add(rw1);
+
+const rw2 = box(COURT_L - WALL_STEP_X, WALL_H_BACK, 0.08, mat.glass);
+rw2.position.set(WALL_STEP_X + (COURT_L - WALL_STEP_X)/2, WALL_H_BACK/2, -0.04);
+scene.add(rw2);
+
+// Glass frame edges
+addEdge([[0, 0, 0], [COURT_L, 0, 0]]);
+addEdge([[0, WALL_H_FRONT, 0], [WALL_STEP_X, WALL_H_FRONT, 0]]);
+addEdge([[WALL_STEP_X, WALL_H_BACK, 0], [COURT_L, WALL_H_BACK, 0]]);
+addEdge([[WALL_STEP_X, WALL_H_FRONT, 0], [WALL_STEP_X, WALL_H_BACK, 0]]);
+addEdge([[0, 0, 0], [0, WALL_H_FRONT, 0]]);
+addEdge([[COURT_L, 0, 0], [COURT_L, WALL_H_BACK, 0]]);
+
+// ── Fraile (45° wedge at frontis + RIGHT wall, z=0 corner) ──
+const fraileGeo = new THREE.BufferGeometry();
+fraileGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+  0, 0, FRAILE_W,           FRAILE_W, 0, 0,           FRAILE_W, WALL_H_FRONT, 0,
+  0, 0, FRAILE_W,           FRAILE_W, WALL_H_FRONT, 0, 0, WALL_H_FRONT, FRAILE_W,
+], 3));
+fraileGeo.computeVertexNormals();
+const fraileMesh = new THREE.Mesh(fraileGeo, mat.fraile);
+fraileMesh.castShadow = true;
+scene.add(fraileMesh);
+
+addEdge([[0, 0, FRAILE_W], [FRAILE_W, 0, 0]], 0xd4a040, 0.6);
+addEdge([[0, WALL_H_FRONT, FRAILE_W], [FRAILE_W, WALL_H_FRONT, 0]], 0xd4a040, 0.6);
+
+// ── Tejadillo (inclined gallery along LEFT wall, z=COURT_W side) ──
+// Outer wall at z=TEJ_Z (8.0m), facing toward the court
+// Bottom solid part (0 to 0.95m)
+const tejWallBot = box(COURT_L, 0.95, 0.1, mat.tejWall);
+tejWallBot.position.set(COURT_L/2, 0.475, TEJ_Z);
+scene.add(tejWallBot);
+
+// Top solid part (1.8m to 1.9m)
+const tejWallTop = box(COURT_L, 0.1, 0.1, mat.tejWall);
+tejWallTop.position.set(COURT_L/2, 1.85, TEJ_Z);
+scene.add(tejWallTop);
+
+// Net / sare grid (0.95m to 1.8m)
+const netGroup = new THREE.Group();
+const netLineMat = new THREE.LineBasicMaterial({ color: 0x9060b0, transparent: true, opacity: 0.4 });
+for (let x = 0; x <= COURT_L; x += 0.6) {
+  const g = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(x, 0.95, TEJ_Z), new THREE.Vector3(x, 1.80, TEJ_Z)
+  ]);
+  netGroup.add(new THREE.Line(g, netLineMat));
+}
+for (let y = 0.95; y <= 1.80; y += 0.15) {
+  const g = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, y, TEJ_Z), new THREE.Vector3(COURT_L, y, TEJ_Z)
+  ]);
+  netGroup.add(new THREE.Line(g, netLineMat));
+}
+scene.add(netGroup);
+
+const netPlane = box(COURT_L, 0.85, 0.02, mat.net);
+netPlane.position.set(COURT_L/2, 0.95 + 0.425, TEJ_Z);
+scene.add(netPlane);
+
+// Inclined roof: from outer edge (z=TEJ_Z, y=TEJ_H_OUTER) up to left wall (z=COURT_W, y=TEJ_H_INNER)
+const roofGeo = new THREE.BufferGeometry();
+roofGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+  0, TEJ_H_OUTER, TEJ_Z,         COURT_L, TEJ_H_OUTER, TEJ_Z,         COURT_L, TEJ_H_INNER, COURT_W,
+  0, TEJ_H_OUTER, TEJ_Z,         COURT_L, TEJ_H_INNER, COURT_W,       0, TEJ_H_INNER, COURT_W,
+], 3));
+roofGeo.computeVertexNormals();
+const roofMesh = new THREE.Mesh(roofGeo, mat.tejRoof);
+roofMesh.castShadow = true; roofMesh.receiveShadow = true;
+scene.add(roofMesh);
+
+// Roof edges
+[[0, TEJ_H_OUTER, TEJ_Z], [COURT_L, TEJ_H_OUTER, TEJ_Z]].forEach(() => {});
+addEdge([[0, TEJ_H_OUTER, TEJ_Z], [COURT_L, TEJ_H_OUTER, TEJ_Z]], 0x50a060, 0.6);
+addEdge([[0, TEJ_H_INNER, COURT_W], [COURT_L, TEJ_H_INNER, COURT_W]], 0x50a060, 0.6);
+addEdge([[0, TEJ_H_OUTER, TEJ_Z], [0, TEJ_H_INNER, COURT_W]], 0x50a060, 0.6);
+addEdge([[COURT_L, TEJ_H_OUTER, TEJ_Z], [COURT_L, TEJ_H_INNER, COURT_W]], 0x50a060, 0.6);
+
+// ── 3D Labels ──
+function makeLabel(text, pos, color = '#ffffff', size = 0.6) {
+  const canvas = document.createElement('canvas');
+  const c = canvas.getContext('2d');
+  canvas.width = 512; canvas.height = 128;
+  c.fillStyle = color;
+  c.font = 'bold 36px system-ui, sans-serif';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(text, 256, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.7, depthTest: false }));
+  sp.position.set(...pos);
+  sp.scale.set(size * 4, size, 1);
+  scene.add(sp);
+  return sp;
+}
+
+makeLabel('FRONTIS', [-0.8, 5, COURT_W/2], '#c06060', 0.7);
+makeLabel('REBOTE', [COURT_L + 0.8, 3, COURT_W/2], '#5070b0', 0.6);
+makeLabel('FRAILE', [0.5, WALL_H_FRONT + 0.5, 0.5], '#d4a040', 0.5);
+makeLabel('TEJADILLO', [COURT_L/2, TEJ_H_INNER + 0.8, COURT_W - 0.3], '#50a060', 0.5);
+makeLabel('SARE', [COURT_L/2, 1.4, TEJ_Z - 0.5], '#9060b0', 0.4);
+makeLabel('LEFT WALL', [COURT_L/2, 4, COURT_W + 0.8], '#888888', 0.35);
+
+// Distance labels on the glass/right side (z=0)
+makeLabel('10m', [10, 0.05, -0.6], '#ffffff', 0.3);
+makeLabel('15m', [15, 0.05, -0.6], '#ffffff', 0.3);
+makeLabel('17.5m', [17.5, 0.05, -0.6], '#ffffff', 0.3);
+makeLabel('20m', [20, 0.05, -0.6], '#ffffff', 0.3);
+
+// ── Shot definitions ──
+// z=0 → right wall (glass/fraile), z=9.3 → left wall (tejadillo)
+// Low z = right side, high z = left/tejadillo side
+const W = COURT_W;
+
+const shotDefs = {
+  saque: {
+    name: 'Serve', es: 'Saque', color: '#4a7cff',
+    desc: 'From 20m, hard throw to the frontis. A good serve stays arrimada (tight) to the left wall (tejadillo side), making the return very difficult.',
+    segments: [
+      { start: [20, 1.3, W - 7], end: [0.3, 2.5, W - 2], arc: 1.8 },
+      { start: [0.3, 2.5, W - 2], end: [10, 0.02, W - 1.5], arc: 0 },
+      { start: [10, 0.02, W - 1.5], end: [20, 0.02, W - 1.2], arc: 0.8 },
+    ],
+    playerPos: [20, 0, W - 7],
+  },
+  dejada: {
+    name: 'Drop shot', es: 'Dejada de abajo', color: '#ff6b6b',
+    desc: 'Deceptive soft touch just above the chapa (80cm metal strip). The ball barely bounces and dies near the frontis — unreturnable.',
+    segments: [
+      { start: [5, 1.2, W - 4.5], end: [0.2, 0.85, W - 4], arc: 0.2 },
+      { start: [0.2, 0.85, W - 4], end: [1.8, 0.02, W - 4.3], arc: 0 },
+      { start: [1.8, 0.02, W - 4.3], end: [2.8, 0.02, W - 4.5], arc: 0.12 },
+    ],
+    playerPos: [5, 0, W - 4.5],
+  },
+  dosparedes: {
+    name: 'Two walls', es: 'Dos paredes', color: '#ffa726',
+    desc: 'Hits the left wall (tejadillo side) first, then the frontis. The ball opens wide toward the right (glass) wall — very hard to read.',
+    segments: [
+      { start: [10, 1.5, W - 5], end: [5, 2.5, W - 0.2], arc: 0.5 },
+      { start: [5, 2.5, W - 0.2], end: [0.3, 2.0, W - 3.5], arc: 0 },
+      { start: [0.3, 2.0, W - 3.5], end: [8, 0.4, W - 8], arc: 0.3 },
+      { start: [8, 0.4, W - 8], end: [16, 0.02, W - 8.8], arc: 0.3 },
+    ],
+    playerPos: [10, 0, W - 5],
+  },
+  arrimada: {
+    name: 'Wall hugger', es: 'Arrimada', color: '#66bb6a',
+    desc: 'Trajectory parallel and very close to the left wall (tejadillo) for its entire path. Extremely difficult to return — the wall blocks the swing.',
+    segments: [
+      { start: [14, 1.3, W - 3.5], end: [0.3, 2.0, W - 0.5], arc: 1.2 },
+      { start: [0.3, 2.0, W - 0.5], end: [10, 0.02, W - 0.5], arc: 0.3 },
+      { start: [10, 0.02, W - 0.5], end: [20, 0.02, W - 0.6], arc: 0.6 },
+    ],
+    playerPos: [14, 0, W - 3.5],
+  },
+  fraile: {
+    name: 'Fraile / Tambor', es: 'Golpe al fraile', color: '#e8a838',
+    desc: 'Targets the 45° wedge between frontis and right wall (glass side). The ball deflects at an unpredictable angle — a signature trinquet shot.',
+    segments: [
+      { start: [14, 1.5, W - 5], end: [0.25, 2.2, 0.4], arc: 1.5 },
+      { start: [0.25, 2.2, 0.4], end: [5, 1.2, W - 5.5], arc: 0 },
+      { start: [5, 1.2, W - 5.5], end: [12, 0.02, W - 3.5], arc: 0.2 },
+    ],
+    playerPos: [14, 0, W - 5],
+  },
+  tejadillo: {
+    name: 'Roof shot', es: 'Tejadillo', color: '#ab47bc',
+    desc: 'Lofted onto the inclined roof on the left side. The ball rolls unpredictably on the wooden slope before dropping off — roof bounces don\'t count.',
+    segments: [
+      { start: [16, 1.3, W - 5], end: [6, 2.15, W - 0.6], arc: 1.5 },
+      { start: [6, 2.05, W - 0.5], end: [12, 2.0, W - 0.4], arc: 0 },
+      { start: [12, 2.0, W - 0.4], end: [14, 0.02, W - 2.0], arc: 0 },
+    ],
+    playerPos: [16, 0, W - 5],
+  },
+  gancho: {
+    name: 'Hook', es: 'Gancho', color: '#26c6da',
+    desc: 'A volley caught in the air and sent sharply toward the fraile (right) corner with a hooking arm motion. Fast and disorienting.',
+    segments: [
+      { start: [6, 2.5, W - 5], end: [0.3, 2.0, 0.5], arc: 0.6 },
+      { start: [0.3, 2.0, 0.5], end: [4, 1.0, W - 5.5], arc: 0 },
+      { start: [4, 1.0, W - 5.5], end: [9, 0.02, W - 4.0], arc: 0.2 },
+    ],
+    playerPos: [6, 0, W - 5],
+  },
+};
+
+// ── Build UI ──
+const panel = document.getElementById('panel');
+Object.entries(shotDefs).forEach(([key, s], i) => {
+  const btn = document.createElement('div');
+  btn.className = 'shot-btn' + (i === 0 ? ' active' : '');
+  btn.dataset.shot = key;
+  btn.style.setProperty('--c', s.color);
+  btn.innerHTML = `<div class="name">${s.name} <span class="es">— ${s.es}</span></div><div class="desc">${s.desc}</div>`;
+  btn.addEventListener('click', () => selectShot(key));
+  panel.appendChild(btn);
+});
+
+// ── Trajectory system ──
+const PTS_PER_SEG = 50;
+
+function buildTrajectory(shot) {
+  const allPts = [];
+  const breaks = [0];
+  for (const seg of shot.segments) {
+    for (let i = 0; i <= PTS_PER_SEG; i++) {
+      const t = i / PTS_PER_SEG;
+      allPts.push(new THREE.Vector3(
+        seg.start[0] + (seg.end[0] - seg.start[0]) * t,
+        seg.start[1] + (seg.end[1] - seg.start[1]) * t + seg.arc * Math.sin(Math.PI * t),
+        seg.start[2] + (seg.end[2] - seg.start[2]) * t,
+      ));
+    }
+    breaks.push(allPts.length);
+  }
+  return { points: allPts, breaks };
+}
+
+// Trail visuals
+const MAX_PTS = 500;
+
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_PTS * 3), 3));
+trailGeo.setDrawRange(0, 0);
+const trailMat = new THREE.LineBasicMaterial({ color: 0x4a7cff, linewidth: 2, transparent: true, opacity: 0.8 });
+const trailLine = new THREE.Line(trailGeo, trailMat);
+scene.add(trailLine);
+
+const dashGeo = new THREE.BufferGeometry();
+dashGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_PTS * 3), 3));
+dashGeo.setDrawRange(0, 0);
+const dashMat = new THREE.LineDashedMaterial({ color: 0x4a7cff, linewidth: 1, transparent: true, opacity: 0.45, dashSize: 0.3, gapSize: 0.15 });
+const dashLine = new THREE.Line(dashGeo, dashMat);
+scene.add(dashLine);
+
+// Ball
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(0.12, 16, 16),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x444444, roughness: 0.3 })
+);
+ball.castShadow = true;
+scene.add(ball);
+
+const glow = new THREE.Mesh(
+  new THREE.SphereGeometry(0.3, 16, 16),
+  new THREE.MeshBasicMaterial({ color: 0x4a7cff, transparent: true, opacity: 0.15 })
+);
+scene.add(glow);
+
+// Impact rings
+const impactRings = [];
+const ringGeo = new THREE.RingGeometry(0.15, 0.3, 24);
+for (let i = 0; i < 6; i++) {
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+  ring.visible = false;
+  scene.add(ring);
+  impactRings.push(ring);
+}
+
+// Player marker
+const playerBody = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.2, 0.25, 1.7, 12),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 })
+);
+scene.add(playerBody);
+
+const playerHead = new THREE.Mesh(
+  new THREE.SphereGeometry(0.18, 12, 12),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 })
+);
+scene.add(playerHead);
+
+// ── Animation ──
+let currentShot = 'saque';
+let trajectory = buildTrajectory(shotDefs.saque);
+let animProgress = 0;
+let animSpeed = 1;
+let paused = false;
+let animating = true;
+
+function selectShot(key) {
+  currentShot = key;
+  const shot = shotDefs[key];
+  trajectory = buildTrajectory(shot);
+
+  trailMat.color.set(shot.color);
+  dashMat.color.set(shot.color);
+  glow.material.color.set(shot.color);
+
+  document.querySelectorAll('.shot-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.shot-btn[data-shot="${key}"]`).classList.add('active');
+
+  const pp = shot.playerPos;
+  playerBody.position.set(pp[0], 0.85, pp[2]);
+  playerHead.position.set(pp[0], 1.88, pp[2]);
+
+  replay();
+}
+
+function replay() {
+  animProgress = 0;
+  animating = true;
+  paused = false;
+  document.getElementById('pause').textContent = 'Pause';
+  impactRings.forEach(r => r.visible = false);
+}
+
+function updateTrajectory(dt) {
+  if (!animating || paused) return;
+
+  const total = trajectory.points.length;
+  const speed = (total / 2.5) * animSpeed;
+  animProgress = Math.min(animProgress + dt * speed, total - 1);
+
+  const idx = Math.floor(animProgress);
+  const frac = animProgress - idx;
+
+  const p0 = trajectory.points[Math.min(idx, total - 1)];
+  const p1 = trajectory.points[Math.min(idx + 1, total - 1)];
+  ball.position.lerpVectors(p0, p1, frac);
+  glow.position.copy(ball.position);
+
+  const firstBreak = trajectory.breaks[1] || total;
+
+  // Solid trail (first segment)
+  const solidEnd = Math.min(idx + 1, firstBreak);
+  const posAttr = trailGeo.getAttribute('position');
+  for (let i = 0; i < solidEnd && i < MAX_PTS; i++) {
+    const pt = trajectory.points[i];
+    posAttr.setXYZ(i, pt.x, pt.y, pt.z);
+  }
+  posAttr.needsUpdate = true;
+  trailGeo.setDrawRange(0, solidEnd);
+
+  // Dashed trail (remaining segments)
+  if (idx >= firstBreak) {
+    const dashEnd = Math.min(idx + 1, total);
+    const dashAttr = dashGeo.getAttribute('position');
+    let di = 0;
+    for (let i = firstBreak; i < dashEnd && di < MAX_PTS; i++, di++) {
+      const pt = trajectory.points[i];
+      dashAttr.setXYZ(di, pt.x, pt.y, pt.z);
+    }
+    dashAttr.needsUpdate = true;
+    dashGeo.setDrawRange(0, di);
+    dashLine.computeLineDistances();
+  } else {
+    dashGeo.setDrawRange(0, 0);
+  }
+
+  // Impact rings
+  const breaks = trajectory.breaks;
+  for (let i = 1; i < breaks.length - 1 && i - 1 < impactRings.length; i++) {
+    const bIdx = breaks[i] - 1;
+    if (idx >= bIdx) {
+      const ring = impactRings[i - 1];
+      ring.visible = true;
+      const pt = trajectory.points[bIdx];
+      ring.position.set(pt.x, pt.y, pt.z);
+
+      if (pt.x < 0.5) ring.rotation.set(0, Math.PI/2, 0);
+      else if (pt.z > W - 0.5) ring.rotation.set(0, 0, 0);
+      else if (pt.z < 0.5) ring.rotation.set(0, 0, 0);
+      else if (pt.y < 0.1) ring.rotation.set(Math.PI/2, 0, 0);
+      else ring.lookAt(ball.position);
+
+      const age = (animProgress - bIdx) / total;
+      ring.material.opacity = Math.max(0, 0.6 - age * 3);
+      const s = 1 + age * 4;
+      ring.scale.set(s, s, s);
+    }
+  }
+
+  if (animProgress >= total - 1) animating = false;
+}
+
+// ── Camera presets ──
+// Default view: behind court (near rebote), slightly on glass side — left=tejadillo, right=glass
+const cameraPresets = {
+  default: { pos: [30, 13, 0],      target: [10, 2, 5] },
+  top:     { pos: [14, 32, 4.65],    target: [14, 0, 4.65] },
+  side:    { pos: [14, 5, -10],      target: [14, 3, 4.65] },
+  player:  { pos: [24, 2, W - 2.3],  target: [5, 2, W - 5] },
+  frontis: { pos: [-6, 4, 4.65],     target: [14, 2, 4.65] },
+  gallery: { pos: [14, 1.5, W + 3],  target: [14, 2, 4] },
+};
+
+let camTarget = null;
+let camTween = 0;
+
+document.querySelectorAll('#cameras button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const preset = cameraPresets[btn.dataset.cam];
+    if (!preset) return;
+    camTarget = {
+      pos: new THREE.Vector3(...preset.pos),
+      target: new THREE.Vector3(...preset.target),
+      startPos: camera.position.clone(),
+      startTarget: controls.target.clone(),
+    };
+    camTween = 0;
+    document.querySelectorAll('#cameras button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+function updateCamera(dt) {
+  if (!camTarget) return;
+  camTween = Math.min(camTween + dt * 1.8, 1);
+  const t = 1 - Math.pow(1 - camTween, 3);
+  camera.position.lerpVectors(camTarget.startPos, camTarget.pos, t);
+  controls.target.lerpVectors(camTarget.startTarget, camTarget.target, t);
+  if (camTween >= 1) camTarget = null;
+}
+
+// ── Controls ──
+document.getElementById('replay').addEventListener('click', replay);
+
+document.getElementById('speed').addEventListener('click', () => {
+  const speeds = [0.25, 0.5, 1, 2];
+  const idx = speeds.indexOf(animSpeed);
+  animSpeed = speeds[(idx + 1) % speeds.length];
+  document.getElementById('speed').textContent = `Speed: ${animSpeed}x`;
+});
+
+document.getElementById('pause').addEventListener('click', () => {
+  paused = !paused;
+  document.getElementById('pause').textContent = paused ? 'Resume' : 'Pause';
+});
+
+// ── Render loop ──
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updateCamera(dt);
+  updateTrajectory(dt);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Init ──
+selectShot('saque');
+animate();
+
+</script>
+</body>
+</html>
