@@ -470,7 +470,9 @@ for (let y = 0.95; y <= 1.80; y += 0.15) {
 }
 scene.add(netGroup);
 
-const netPlane = box(netLen, 0.85, 0.02, mat.net);
+const netPlaneMat = mat.net.clone();
+netPlaneMat.emissive = new THREE.Color(0x000000);
+const netPlane = box(netLen, 0.85, 0.02, netPlaneMat);
 netPlane.position.set(NET_START + netLen/2, 0.95 + 0.425, TEJ_Z);
 scene.add(netPlane);
 
@@ -530,9 +532,23 @@ for (let y = 0.95; y <= 1.80; y += 0.15) {
     new THREE.Vector3(rebTejX, y, rebNetStart), new THREE.Vector3(rebTejX, y, rebNetEnd)
   ]), rebNetMat));
 }
-const rebNetPlane = box(0.02, 0.85, rebNetW, mat.net);
+const rebNetPlaneMat = mat.net.clone();
+rebNetPlaneMat.emissive = new THREE.Color(0x000000);
+const rebNetPlane = box(0.02, 0.85, rebNetW, rebNetPlaneMat);
 rebNetPlane.position.set(rebTejX, 0.95 + 0.425, rebNetStart + rebNetW/2);
 scene.add(rebNetPlane);
+
+function setNetHighlight(netType, on) {
+  const m = netType === 'main' ? netPlane.material : rebNetPlane.material;
+  m.color.set(on ? 0xcaa2ff : 0x9060b0);
+  m.emissive.set(on ? 0x5a2f8a : 0x000000);
+  m.opacity = on ? 0.65 : 0.35;
+}
+
+function resetNetHighlights() {
+  setNetHighlight('main', false);
+  setNetHighlight('rebote', false);
+}
 
 // Boundary poles + central pole
 for (const z of [rebNetStart, COURT_W/2, rebNetEnd]) {
@@ -664,73 +680,43 @@ addDimLine([WALL_STEP_X + 0.5, 0, -1.2], [WALL_STEP_X + 0.5, WALL_H_FRONT, -1.2]
 // Wall height further back
 addDimLine([COURT_L - 2, 0, -1.2], [COURT_L - 2, WALL_H_BACK, -1.2], '5.50 m', [1, 0, 0], 0.2);
 
-// ── Shot definitions ──
+// ── Shot definitions (physics-based: position + direction + strength) ──
 const shotKeys = ['saque', 'dejada', 'dosparedes', 'arrimada', 'fraile', 'tejadillo', 'gancho'];
 
 const shotDefs = {
   saque: {
     color: '#4a7cff',
-    segments: [
-      { start: [20, 1.3, 7.5], end: [0.3, 3.0, 7.5], arc: 2.0 },
-      { start: [0.3, 3.0, 7.5], end: [15, 0.02, 7.5], arc: 0 },
-      { start: [15, 0.02, 7.5], end: [24, 0.02, 7.5], arc: 0.5 },
-    ],
+    pos: [20, 1.3, 7.5], dir: [-1, 0.38, 0], strength: 28,
     playerPos: [20, 0, 7.5],
   },
   dejada: {
     color: '#ff6b6b',
-    segments: [
-      { start: [5, 1.2, 4.8], end: [0.2, 0.85, 5.1], arc: 0.2 },
-      { start: [0.2, 0.85, 5.1], end: [1.8, 0.02, 5.2], arc: 0 },
-      { start: [1.8, 0.02, 5.2], end: [2.5, 0.02, 5.25], arc: 0.1 },
-    ],
+    pos: [5, 1.2, 4.8], dir: [-1, 0.35, 0.06], strength: 8,
     playerPos: [5, 0, 4.8],
   },
   dosparedes: {
     color: '#ffa726',
-    segments: [
-      { start: [10, 1.5, 4.3], end: [6, 2.8, W], arc: 0.5 },
-      { start: [6, 2.8, W], end: [0.3, 2.2, 3.5], arc: 0 },
-      { start: [0.3, 2.2, 3.5], end: [5, 0.4, 0.5], arc: 0.3 },
-      { start: [5, 0.4, 0.5], end: [12, 0.02, 0.5], arc: 0.25 },
-    ],
+    pos: [10, 1.5, 4.3], dir: [-0.55, 0.45, 0.72], strength: 20,
     playerPos: [10, 0, 4.3],
   },
   arrimada: {
     color: '#66bb6a',
-    segments: [
-      { start: [14, 1.3, 7.5], end: [0.3, 2.5, 7.6], arc: 1.2 },
-      { start: [0.3, 2.5, 7.6], end: [12, 0.02, 7.7], arc: 0.3 },
-      { start: [12, 0.02, 7.7], end: [22, 0.02, 7.8], arc: 0.5 },
-    ],
+    pos: [14, 1.3, 7.5], dir: [-1, 0.35, 0.01], strength: 22,
     playerPos: [14, 0, 7.5],
   },
   fraile: {
     color: '#e8a838',
-    segments: [
-      { start: [14, 1.5, 4.3], end: [0.15, 2.2, 0.32], arc: 1.5 },
-      { start: [0.15, 2.2, 0.32], end: [2.0, 1.0, 5.5], arc: 0 },
-      { start: [2.0, 1.0, 5.5], end: [4, 0.02, 6.5], arc: 0.15 },
-    ],
+    pos: [14, 1.5, 4.3], dir: [-0.88, 0.30, -0.37], strength: 22,
     playerPos: [14, 0, 4.3],
   },
   tejadillo: {
     color: '#ab47bc',
-    segments: [
-      { start: [16, 1.3, 4.3], end: [0.3, 3.5, 7.0], arc: 2.0 },
-      { start: [0.3, 3.5, 7.0], end: [3, 2.06, 8.5], arc: 0 },
-      { start: [3, 2.06, 8.5], end: [20, 1.9, 8.0], arc: 0 },
-      { start: [20, 1.9, 8.0], end: [21, 0.02, 7.5], arc: 0 },
-    ],
+    pos: [16, 1.3, 4.3], dir: [-0.90, 0.38, 0.20], strength: 24,
     playerPos: [16, 0, 4.3],
   },
   gancho: {
     color: '#26c6da',
-    segments: [
-      { start: [6, 2.5, 4.3], end: [0.15, 2.2, 1.5], arc: 0.8 },
-      { start: [0.15, 2.2, 1.5], end: [3.0, 1.6, 0.15], arc: 0 },
-      { start: [3.0, 1.6, 0.15], end: [7, 0.02, 2.5], arc: 0.2 },
-    ],
+    pos: [6, 2.5, 4.3], dir: [-0.83, 0.25, -0.50], strength: 18,
     playerPos: [6, 0, 4.3],
   },
 };
@@ -767,27 +753,179 @@ function updateLegend() {
     `<span class="dot" style="background:#aa3333"></span> ${t('legOreilles')}`;
 }
 
-// ── Trajectory system ──
-const PTS_PER_SEG = 50;
+// ── Physics simulation ──
+const GRAVITY = 9.81;
+const RESTITUTION = 0.65;
+const WALL_FRIC = 0.98;
+const FLOOR_REST = 0.50;
+const FLOOR_FRIC = 0.93;
+const SIM_DT = 0.002;
+const MAX_SIM_TIME = 8;
+const MIN_SPEED = 0.4;
+const RECORD_EVERY = 10;
+const NET_Y_MIN = 0.95;
+const NET_Y_MAX = 1.80;
+const BALL_R = 0.12;
 
-function buildTrajectory(shot) {
-  const allPts = [];
-  const breaks = [0];
-  for (const seg of shot.segments) {
-    for (let i = 0; i <= PTS_PER_SEG; i++) {
-      const t = i / PTS_PER_SEG;
-      allPts.push(new THREE.Vector3(
-        seg.start[0] + (seg.end[0] - seg.start[0]) * t,
-        seg.start[1] + (seg.end[1] - seg.start[1]) * t + seg.arc * Math.sin(Math.PI * t),
-        seg.start[2] + (seg.end[2] - seg.start[2]) * t,
-      ));
-    }
-    breaks.push(allPts.length);
-  }
-  return { points: allPts, breaks };
+const ROOF_DZ = COURT_W - TEJ_Z;
+const ROOF_DY = TEJ_H_INNER - TEJ_H_OUTER;
+const ROOF_N_LEN = Math.sqrt(ROOF_DY * ROOF_DY + ROOF_DZ * ROOF_DZ);
+const ROOF_NORMAL = new THREE.Vector3(0, ROOF_DZ / ROOF_N_LEN, -ROOF_DY / ROOF_N_LEN);
+
+function roofY(z) {
+  return TEJ_H_OUTER + (z - TEJ_Z) / ROOF_DZ * ROOF_DY;
 }
 
-const MAX_PTS = 500;
+function simulateShot(shot) {
+  const d = new THREE.Vector3(...shot.dir).normalize();
+  let vx = d.x * shot.strength, vy = d.y * shot.strength, vz = d.z * shot.strength;
+  let x = shot.pos[0], y = shot.pos[1], z = shot.pos[2];
+
+  const points = [new THREE.Vector3(x, y, z)];
+  const breaks = [0];
+  let netHit = null;
+  let step = 0;
+  const maxSteps = Math.ceil(MAX_SIM_TIME / SIM_DT);
+
+  for (let i = 0; i < maxSteps; i++) {
+    const prevX = x, prevY = y, prevZ = z;
+    vy -= GRAVITY * SIM_DT;
+    x += vx * SIM_DT;
+    y += vy * SIM_DT;
+    z += vz * SIM_DT;
+    step++;
+
+    let hit = false;
+
+    // Main sare net (z = TEJ_Z), in the net window only: touching it ends the point
+    const dzMain = z - prevZ;
+    if (Math.abs(dzMain) > 1e-8) {
+      const mainPlane = TEJ_Z;
+      const crossedMain = (prevZ - (mainPlane - BALL_R)) * (z - (mainPlane - BALL_R)) <= 0
+        || (prevZ - (mainPlane + BALL_R)) * (z - (mainPlane + BALL_R)) <= 0;
+      if (crossedMain) {
+        const t = Math.max(0, Math.min(1, (mainPlane - prevZ) / dzMain));
+        const cx = prevX + (x - prevX) * t;
+        const cy = prevY + (y - prevY) * t;
+        if (cx >= NET_START && cx <= NET_END && cy >= NET_Y_MIN && cy <= NET_Y_MAX) {
+          x = cx; y = cy; z = mainPlane;
+          points.push(new THREE.Vector3(x, y, z));
+          breaks.push(points.length);
+          netHit = { net: 'main', index: points.length - 1 };
+          break;
+        }
+      }
+    }
+
+    // Rebote sare net (x = rebTejX), in the middle 6m window: touching it ends the point
+    const dxReb = x - prevX;
+    if (Math.abs(dxReb) > 1e-8) {
+      const rebPlane = rebTejX;
+      const crossedReb = (prevX - (rebPlane - BALL_R)) * (x - (rebPlane - BALL_R)) <= 0
+        || (prevX - (rebPlane + BALL_R)) * (x - (rebPlane + BALL_R)) <= 0;
+      if (crossedReb) {
+        const t = Math.max(0, Math.min(1, (rebPlane - prevX) / dxReb));
+        const cy = prevY + (y - prevY) * t;
+        const cz = prevZ + (z - prevZ) * t;
+        if (cz >= rebNetStart && cz <= rebNetEnd && cy >= NET_Y_MIN && cy <= NET_Y_MAX) {
+          x = rebPlane; y = cy; z = cz;
+          points.push(new THREE.Vector3(x, y, z));
+          breaks.push(points.length);
+          netHit = { net: 'rebote', index: points.length - 1 };
+          break;
+        }
+      }
+    }
+
+    // Fraile (45-degree wedge at frontis/glass corner, x+z = FRAILE_W)
+    if (x >= 0 && x < FRAILE_W && z >= 0 && z < FRAILE_W && x + z < FRAILE_W && y < WALL_H_FRONT) {
+      const pen = FRAILE_W - (x + z);
+      x += pen / 2; z += pen / 2;
+      const tvx = vx, tvz = vz;
+      vx = -tvz * RESTITUTION;
+      vz = -tvx * RESTITUTION;
+      vy *= RESTITUTION;
+      hit = true;
+    }
+
+    // Frontis (x = 0)
+    if (x < 0) {
+      x = -x;
+      vx = Math.abs(vx) * RESTITUTION;
+      vy *= WALL_FRIC; vz *= WALL_FRIC;
+      hit = true;
+    }
+
+    // Rebote (x = COURT_L)
+    if (x > COURT_L) {
+      x = 2 * COURT_L - x;
+      vx = -Math.abs(vx) * RESTITUTION;
+      vy *= WALL_FRIC; vz *= WALL_FRIC;
+      hit = true;
+    }
+
+    // Glass wall (z = 0)
+    if (z < 0) {
+      z = -z;
+      vz = Math.abs(vz) * RESTITUTION;
+      vx *= WALL_FRIC; vy *= WALL_FRIC;
+      hit = true;
+    }
+
+    // Left side: tejadillo outer wall, roof, and wall above
+    if (z > TEJ_Z) {
+      if (y < TEJ_H_OUTER) {
+        z = 2 * TEJ_Z - z;
+        vz = -Math.abs(vz) * RESTITUTION;
+        vx *= WALL_FRIC; vy *= WALL_FRIC;
+        hit = true;
+      } else if (z > COURT_W) {
+        z = 2 * COURT_W - z;
+        vz = -Math.abs(vz) * RESTITUTION;
+        vx *= WALL_FRIC; vy *= WALL_FRIC;
+        hit = true;
+      } else {
+        const ry = roofY(z);
+        if (y < ry) {
+          const dot = vx * ROOF_NORMAL.x + vy * ROOF_NORMAL.y + vz * ROOF_NORMAL.z;
+          if (dot < 0) {
+            vx = (vx - 2 * dot * ROOF_NORMAL.x) * RESTITUTION;
+            vy = (vy - 2 * dot * ROOF_NORMAL.y) * RESTITUTION;
+            vz = (vz - 2 * dot * ROOF_NORMAL.z) * RESTITUTION;
+          }
+          y = ry + 0.01;
+          hit = true;
+        }
+      }
+    }
+
+    // Floor (y = 0)
+    if (y < 0) {
+      y = 0;
+      vy = Math.abs(vy) * FLOOR_REST;
+      vx *= FLOOR_FRIC; vz *= FLOOR_FRIC;
+      hit = true;
+    }
+
+    // Record points
+    if (hit) {
+      points.push(new THREE.Vector3(x, y, z));
+      breaks.push(points.length);
+    } else if (step % RECORD_EVERY === 0) {
+      points.push(new THREE.Vector3(x, y, z));
+    }
+
+    const speed = Math.sqrt(vx * vx + vy * vy + vz * vz);
+    if (i > 200 && speed < MIN_SPEED && y < 0.15) break;
+    if (points.length >= 1900) break;
+  }
+
+  if (breaks[breaks.length - 1] !== points.length)
+    breaks.push(points.length);
+  return { points, breaks, netHit };
+}
+
+const MAX_PTS = 2000;
 const trailGeo = new THREE.BufferGeometry();
 trailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_PTS * 3), 3));
 trailGeo.setDrawRange(0, 0);
@@ -836,7 +974,7 @@ scene.add(playerHead);
 
 // ── Animation ──
 let currentShot = 'saque';
-let trajectory = buildTrajectory(shotDefs.saque);
+let trajectory = simulateShot(shotDefs.saque);
 let animProgress = 0;
 let animSpeed = 1;
 let paused = false;
@@ -845,7 +983,7 @@ let animating = true;
 function selectShot(key) {
   currentShot = key;
   const shot = shotDefs[key];
-  trajectory = buildTrajectory(shot);
+  trajectory = simulateShot(shot);
   trailMat.color.set(shot.color);
   dashMat.color.set(shot.color);
   glow.material.color.set(shot.color);
@@ -868,6 +1006,7 @@ function replay() {
   pauseBtn.textContent = t('pause');
   impactRings.forEach(r => r.visible = false);
   resetZones();
+  resetNetHighlights();
 }
 
 function updateTrajectory(dt) {
@@ -883,6 +1022,9 @@ function updateTrajectory(dt) {
   ball.position.lerpVectors(p0, p1, frac);
   glow.position.copy(ball.position);
   checkZoneHit(ball.position);
+  if (trajectory.netHit && idx >= trajectory.netHit.index) {
+    setNetHighlight(trajectory.netHit.net, true);
+  }
 
   const firstBreak = trajectory.breaks[1] || total;
   const solidEnd = Math.min(idx + 1, firstBreak);
