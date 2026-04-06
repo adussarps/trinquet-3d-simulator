@@ -289,6 +289,70 @@ const padBelow = box(0.36, CHAPA_LOW, COURT_W, mat.padding);
 padBelow.position.set(-0.175, CHAPA_LOW/2, COURT_W/2);
 scene.add(padBelow);
 
+// ── Frontis zones (educational target quadrants) ──
+const ZONE_Y_MID = (CHAPA_LOW + CHAPA_HIGH) / 2;
+const ZONE_Z_MID = COURT_W / 2;
+const ZONE_H = (CHAPA_HIGH - CHAPA_LOW) / 2;
+const ZONE_W_HALF = COURT_W / 2;
+
+const zonesDef = [
+  { id: 1, label: '1', yC: ZONE_Y_MID + ZONE_H/2, zC: ZONE_Z_MID + ZONE_W_HALF/2 },
+  { id: 2, label: '2', yC: ZONE_Y_MID + ZONE_H/2, zC: ZONE_Z_MID - ZONE_W_HALF/2 },
+  { id: 3, label: '3', yC: ZONE_Y_MID - ZONE_H/2, zC: ZONE_Z_MID + ZONE_W_HALF/2 },
+  { id: 4, label: '4', yC: ZONE_Y_MID - ZONE_H/2, zC: ZONE_Z_MID - ZONE_W_HALF/2 },
+];
+
+const zones = [];
+const hitZones = new Set();
+const zoneBorderMat = new THREE.LineBasicMaterial({ color: 0x4488cc, transparent: true, opacity: 0.25 });
+
+for (const zd of zonesDef) {
+  const zm = new THREE.MeshStandardMaterial({
+    color: 0x4488cc, transparent: true, opacity: 0.06,
+    emissive: 0x000000, roughness: 0.5, side: THREE.DoubleSide,
+  });
+  const zh = ZONE_H - 0.1, zw = ZONE_W_HALF - 0.1;
+  const mesh = box(0.02, zh, zw, zm);
+  mesh.position.set(0.02, zd.yC, zd.zC);
+  scene.add(mesh);
+
+  const by0 = zd.yC - zh/2, by1 = zd.yC + zh/2;
+  const bz0 = zd.zC - zw/2, bz1 = zd.zC + zw/2;
+  const bx = 0.03;
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(bx,by0,bz0), new THREE.Vector3(bx,by1,bz0),
+    new THREE.Vector3(bx,by1,bz1), new THREE.Vector3(bx,by0,bz1),
+    new THREE.Vector3(bx,by0,bz0),
+  ]), zoneBorderMat));
+
+  const sp = createSprite(zd.label, [0.05, zd.yC, zd.zC], '#4488cc', 1.8);
+  scene.add(sp);
+
+  zones.push({ ...zd, mesh, mat: zm, sprite: sp });
+}
+
+function checkZoneHit(pos) {
+  if (pos.x > 0.5) return;
+  for (const z of zones) {
+    if (hitZones.has(z.id)) continue;
+    if (Math.abs(pos.y - z.yC) < ZONE_H/2 && Math.abs(pos.z - z.zC) < ZONE_W_HALF/2) {
+      hitZones.add(z.id);
+      z.mat.opacity = 0.3;
+      z.mat.emissive.set(0x2266aa);
+      z.sprite.material.opacity = 1.0;
+    }
+  }
+}
+
+function resetZones() {
+  hitZones.clear();
+  for (const z of zones) {
+    z.mat.opacity = 0.06;
+    z.mat.emissive.set(0x000000);
+    z.sprite.material.opacity = 0.7;
+  }
+}
+
 // ── Rebote (x=28.5) ──
 const rebote = box(0.3, WALL_H_BACK, COURT_W, mat.rebote);
 rebote.position.set(COURT_L + 0.15, WALL_H_BACK/2, COURT_W/2);
@@ -803,6 +867,7 @@ function replay() {
   const pauseBtn = document.getElementById('pause');
   pauseBtn.textContent = t('pause');
   impactRings.forEach(r => r.visible = false);
+  resetZones();
 }
 
 function updateTrajectory(dt) {
@@ -817,6 +882,7 @@ function updateTrajectory(dt) {
   const p1 = trajectory.points[Math.min(idx + 1, total - 1)];
   ball.position.lerpVectors(p0, p1, frac);
   glow.position.copy(ball.position);
+  checkZoneHit(ball.position);
 
   const firstBreak = trajectory.breaks[1] || total;
   const solidEnd = Math.min(idx + 1, firstBreak);
